@@ -127,6 +127,19 @@ router.get('/progress/analytics/:userId', verifyToken, async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
+
+    const progressEntries = user.progress || [];
+
+    const correct = progressEntries.filter(p => p.accuracy === 100).length;
+    const incorrect = progressEntries.filter(p => p.accuracy === 0).length;
+
+    let streak = 0;
+    for (let i = progressEntries.length - 1; i >= 0; i--) {
+      if (progressEntries[i].accuracy === 100) streak++;
+      else break;
+    }
+
+
     
     // Calculate aggregated analytics
     const totalExercises = user.progress.reduce((sum, entry) => sum + (entry.completedExercises || 0), 0);
