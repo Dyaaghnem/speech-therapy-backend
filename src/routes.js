@@ -42,57 +42,10 @@ router.post('/signup', async (req, res) => {
  * POST /login
  * Logs in a user and returns a JWT token.
  */
-router.post('/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-
-    // Validate input
-    if (!username || !password) {
-      return res.status(400).json({ message: 'Username and password required' });
-    }
-
-    // Find user by username
-    const user = await User.findOne({ username });
-    if (!user) {
-      return res.status(401).json({ message: 'Invalid username or password' });
-    }
-
-    // Compare hashed passwords
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid username or password' });
-    }
-
-    // Generate JWT with userId and username
-    const token = jwt.sign(
-      { userId: user._id, username: user.username },
-      process.env.JWT_SECRET,
-      { expiresIn: '1h' }
-    );
-
-    // ✅ Return everything Flutter needs
-    res.status(200).json({
-      message: 'Login successful',
-      token,
-      userId: user._id,
-      username: user.username  // ← added this line
-    });
-  } catch (error) {
-    console.error('Login Error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-
-/**
- * POST /progress
- * Protected route: Updates the progress data for the logged-in user.
- * Keeps only the last 10 progress records.
- */
 router.post('/progress', verifyToken, async (req, res) => {
   try {
     const progressData = req.body.progressData;
-    
+
     // Validate progress data
     if (
       !progressData ||
@@ -104,71 +57,126 @@ router.post('/progress', verifyToken, async (req, res) => {
     ) {
       return res.status(400).json({ message: 'Invalid progress data. Check values.' });
     }
-    
-    // Use userId from the JWT payload
+
+    // Find user
     const user = await User.findById(req.user.userId);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    
-    // Keep only the last 10 progress records (last 9 plus the new one)
+
+    // Keep only the last 10 entries
     user.progress = [...user.progress.slice(-9), progressData];
-    
     await user.save();
-    res.status(200).json({ message: 'Progress updated successfully', progress: user.progress });
+
+    // Logging
+    console.log('✅ Progress saved for:', user._id);
+    console.log('🧠 New progress array:', user.progress);
+
+    // Recompute analytics
+    const entries = user.progress;
+    const correctCount = entries.filter(p => p.accuracy === 100).length;
+    const incorrectCount = entries.filter(p => p.accuracy === 0).length;
+
+    let streak = 0;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i].accuracy === 100) streak++;
+      else break;
+    }
+
+    const totalExercises = entries.reduce((sum, e) => sum + (e.completedExercises || 0), 0);
+    const averageAccuracy = entries.length > 0
+      ? entries.reduce((sum, e) => sum + (e.accuracy || 0), 0) / entries.length
+      : 0;
+    const bestScore = entries.reduce((max, e) => (e.score > max ? e.score : max), 0);
+
+    console.log('📊 Analytics after update for:', user._id);
+    console.log('   totalExercises =', totalExercises);
+    console.log('   averageAccuracy =', averageAccuracy.toFixed(2));
+    console.log('   bestScore =', bestScore);
+    console.log('   correctCount =', correctCount);
+    console.log('   incorrectCount =', incorrectCount);
+    console.log('   streak =', streak);
+
+    // Respond with both progress list and fresh analytics
+    return res.status(200).json({
+      message: 'Progress updated successfully',
+      progress: entries,
+      analytics: {
+        totalExercises,
+        averageAccuracy,
+        bestScore,
+        progressCount: entries.length,
+        correctCount,
+        incorrectCount,
+        streak
+      }
+    });
   } catch (error) {
     console.error('Progress Update Error:', error);
-    res.status(500).json({ message: 'Server error' });
+    return res.status(500).json({ message: 'Server error' });
   }
 });
 
+
 /**
  * GET /progress/analytics/:userId
- * Protected route: Retrieves aggregated progress analytics for the logged-in user.
+ * Protected route: Retrieves aggregated progress analytics.
  */
 router.get('/progress/analytics/:userId', verifyToken, async (req, res) => {
   try {
-    // Enforce that the requested userId matches the token's userId
+    // Enforce correct user
     if (req.user.userId !== req.params.userId) {
       return res.status(403).json({ message: 'Unauthorized access to analytics.' });
     }
-    
+
     const user = await User.findById(req.params.userId);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    const progressEntries = user.progress || [];
+    const entries = user.progress || [];
 
-    const correct = progressEntries.filter(p => p.accuracy === 100).length;
-    const incorrect = progressEntries.filter(p => p.accuracy === 0).length;
+    // Recompute analytics
+    const correctCount = entries.filter(p => p.accuracy === 100).length;
+    const incorrectCount = entries.filter(p => p.accuracy === 0).length;
 
     let streak = 0;
-    for (let i = progressEntries.length - 1; i >= 0; i--) {
-      if (progressEntries[i].accuracy === 100) streak++;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i].accuracy === 100) streak++;
       else break;
     }
 
-
-    
-    // Calculate aggregated analytics
-    const totalExercises = user.progress.reduce((sum, entry) => sum + (entry.completedExercises || 0), 0);
-    const averageAccuracy = user.progress.length > 0
-      ? user.progress.reduce((sum, entry) => sum + (entry.accuracy || 0), 0) / user.progress.length
+    const totalExercises = entries.reduce((sum, e) => sum + (e.completedExercises || 0), 0);
+    const averageAccuracy = entries.length > 0
+      ? entries.reduce((sum, e) => sum + (e.accuracy || 0), 0) / entries.length
       : 0;
-    const bestScore = user.progress.reduce((max, entry) => (entry.score > max ? entry.score : max), 0);
-    
-    res.status(200).json({
+    const bestScore = entries.reduce((max, e) => (e.score > max ? e.score : max), 0);
+
+    // Logging
+    console.log('📊 Returning analytics for:', user._id);
+    console.log('   totalExercises =', totalExercises);
+    console.log('   averageAccuracy =', averageAccuracy.toFixed(2));
+    console.log('   bestScore =', bestScore);
+    console.log('   correctCount =', correctCount);
+    console.log('   incorrectCount =', incorrectCount);
+    console.log('   streak =', streak);
+
+    return res.status(200).json({
       totalExercises,
       averageAccuracy,
       bestScore,
-      progressCount: user.progress.length
+      progressCount: entries.length,
+      correctCount,
+      incorrectCount,
+      streak
     });
   } catch (error) {
     console.error('Progress Analytics Error:', error);
-    res.status(500).json({ message: 'Server error' });
+    return res.status(500).json({ message: 'Server error' });
   }
 });
+
+
 router.post('/forgot-password', async (req, res) => {
   try {
     const { username, newPassword } = req.body;
