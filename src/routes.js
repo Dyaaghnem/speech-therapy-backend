@@ -160,48 +160,63 @@ router.post('/progress', verifyToken, async (req, res) => {
  */
 router.get('/progress/analytics/:userId', verifyToken, async (req, res) => {
   try {
-    // Enforce correct user
+    // 1) Auth check
     if (req.user.userId !== req.params.userId) {
       return res.status(403).json({ message: 'Unauthorized access to analytics.' });
     }
 
+    // 2) Load user & their progress array
     const user = await User.findById(req.params.userId);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-
     const entries = user.progress || [];
 
-    // Recompute analytics
-    const correctCount = entries.filter(p => p.accuracy === 100).length;
-    const incorrectCount = entries.filter(p => p.accuracy === 0).length;
+    // 3) Filter only today's entries
+    const today = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+    const todays = entries.filter(e =>
+      e.lastUpdated.toISOString().slice(0, 10) === today
+    );
 
+    // 4) Today's metrics
+    const correctCount   = todays.filter(p => p.accuracy === 100).length;
+    const incorrectCount = todays.filter(p => p.accuracy === 0).length;
+    const progressCount  = todays.length;
+
+    // 5) Today's streak (break on first non-perfect today)
     let streak = 0;
     for (let i = entries.length - 1; i >= 0; i--) {
-      if (entries[i].accuracy === 100) streak++;
-      else break;
+      const entryDay = entries[i].lastUpdated.toISOString().slice(0, 10);
+      if (entryDay === today && entries[i].accuracy === 100) {
+        streak++;
+      } else {
+        break;
+      }
     }
 
+    // 6) Overall stats (unchanged)
     const totalExercises = entries.reduce((sum, e) => sum + (e.completedExercises || 0), 0);
     const averageAccuracy = entries.length > 0
       ? entries.reduce((sum, e) => sum + (e.accuracy || 0), 0) / entries.length
       : 0;
     const bestScore = entries.reduce((max, e) => (e.score > max ? e.score : max), 0);
 
-    // Logging
+    // 7) Logging for debugging
     console.log('📊 Returning analytics for:', user._id);
-    console.log('   totalExercises =', totalExercises);
-    console.log('   averageAccuracy =', averageAccuracy.toFixed(2));
-    console.log('   bestScore =', bestScore);
-    console.log('   correctCount =', correctCount);
-    console.log('   incorrectCount =', incorrectCount);
-    console.log('   streak =', streak);
+    console.log('   totalExercises   =', totalExercises);
+    console.log('   averageAccuracy  =', averageAccuracy.toFixed(2));
+    console.log('   bestScore        =', bestScore);
+    console.log('   progressCount    =', progressCount);
+    console.log('   correctCount     =', correctCount);
+    console.log('   incorrectCount   =', incorrectCount);
+    console.log('   streak           =', streak);
 
+    // 8) Response JSON exactly matches your original shape
     return res.status(200).json({
       totalExercises,
       averageAccuracy,
       bestScore,
-      progressCount: entries.length,
+      progressCount,
       correctCount,
       incorrectCount,
       streak
