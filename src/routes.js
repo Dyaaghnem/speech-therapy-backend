@@ -42,6 +42,42 @@ router.post('/signup', async (req, res) => {
  * POST /login
  * Logs in a user and returns a JWT token.
  */
+
+router.post('/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({ message: 'Username and password required' });
+    }
+    
+    const user = await User.findOne({ username });
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid username or password' });
+    }
+    
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Invalid username or password' });
+    }
+    
+    // Include both userId and username in the token payload
+    const token = jwt.sign(
+      { userId: user._id, username: user.username },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+    
+    res.status(200).json({ message: 'Login successful', token, userId: user._id });
+  } catch (error) {
+    console.error('Login Error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+
 router.post('/progress', verifyToken, async (req, res) => {
   try {
     const progressData = req.body.progressData;
