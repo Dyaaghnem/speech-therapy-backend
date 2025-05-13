@@ -228,6 +228,65 @@ router.get('/progress/analytics/:userId', verifyToken, async (req, res) => {
 });
 
 
+
+/**
+ * GET /progress/history/:userId
+ * Returns progress accuracy grouped by date (for chart).
+ */
+router.get('/progress/history/:userId', verifyToken, async (req, res) => {
+  try {
+    if (req.user.userId !== req.params.userId) {
+      return res.status(403).json({ message: 'Unauthorized access to progress history.' });
+    }
+
+    const user = await User.findById(req.params.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const entries = user.progress || [];
+
+    // Group progress by day
+    const grouped = {};
+    entries.forEach(entry => {
+      const date = entry.lastUpdated
+        ? entry.lastUpdated.toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10); // fallback
+
+      if (!grouped[date]) {
+        grouped[date] = { correct: 0, incorrect: 0 };
+      }
+
+      if (entry.accuracy === 100) {
+        grouped[date].correct++;
+      } else {
+        grouped[date].incorrect++;
+      }
+    });
+
+    const sortedDates = Object.keys(grouped).sort();
+    const dates = [];
+    const accuracy = [];
+
+    for (const date of sortedDates) {
+      const correct = grouped[date].correct;
+      const incorrect = grouped[date].incorrect;
+      const total = correct + incorrect;
+
+      dates.push(date);
+      accuracy.push(total === 0 ? 0 : Math.round((correct / total) * 100));
+    }
+
+    return res.status(200).json({ dates, accuracy });
+  } catch (error) {
+    console.error('Progress History Error:', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+
 router.post('/forgot-password', async (req, res) => {
   try {
     const { username, newPassword } = req.body;
